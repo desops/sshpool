@@ -9,10 +9,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-var Debug bool
-
 type Pool struct {
-	config *ssh.ClientConfig
+	config     *ssh.ClientConfig
+	poolconfig *PoolConfig
 
 	clients_mu sync.Mutex
 	clients    map[string]*ssh.Client
@@ -22,6 +21,10 @@ type Pool struct {
 
 	sessions_mu sync.Mutex
 	sessions    map[string][]Session
+}
+
+type PoolConfig struct {
+	Debug bool
 }
 
 type Session struct {
@@ -50,12 +53,15 @@ func (s *Session) Close() error {
 	return err
 }
 
-func New(config *ssh.ClientConfig) *Pool {
+func New(config *ssh.ClientConfig, poolconfig *PoolConfig) *Pool {
+	if poolconfig == nil {
+		poolconfig = &PoolConfig{}
+	}
 	return &Pool{
-		config:   config,
-		clients:  make(map[string]*ssh.Client),
-		dialing:  make(map[string]chan struct{}),
-		sessions: make(map[string][]Session),
+		poolconfig: poolconfig,
+		clients:    make(map[string]*ssh.Client),
+		dialing:    make(map[string]chan struct{}),
+		sessions:   make(map[string][]Session),
 	}
 }
 
@@ -144,7 +150,7 @@ retry:
 
 	var err error
 
-	if Debug {
+	if p.poolconfig.Debug {
 		fmt.Println("ssh open", host)
 	}
 	client, err = ssh.Dial("tcp", host+":22", p.config)
@@ -170,7 +176,7 @@ func (p *Pool) Close() {
 	p.clients_mu.Unlock()
 
 	for host, client := range clients {
-		if Debug {
+		if p.poolconfig.Debug {
 			fmt.Println("ssh quit", host)
 		}
 		client.Close()

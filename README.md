@@ -44,7 +44,7 @@ func run() error {
 		},
 	}
 
-	pool := sshpool.New(config)
+	pool := sshpool.New(config, nil)
 
 	for i := 0; i < 100; i++ {
 		go func() {
