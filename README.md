@@ -53,7 +53,7 @@ func run() error {
 				if err != nil {
 					return err
 				}
-				defer session.Close() // important: this returns it to the pool
+				defer session.Put() // important: this returns it to the pool
 
 				session.Stdout = os.Stdout
 				session.Stderr = os.Stderr

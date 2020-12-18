@@ -33,7 +33,7 @@ type Session struct {
 	host string
 }
 
-func (s *Session) Close() error {
+func (s *Session) Put() {
 	s.pool.sessions_mu.Lock()
 	ss := s.pool.sessions
 	for idx, s1 := range ss[s.host] {
@@ -45,12 +45,7 @@ func (s *Session) Close() error {
 	}
 	s.pool.sessions = ss
 	s.pool.sessions_mu.Unlock()
-
-	err := s.Session.Close()
-	//if err != nil && err != io.EOF {
-	//	log.Printf("fu %v %p", err, s.Session)
-	//}
-	return err
+	return
 }
 
 func New(config *ssh.ClientConfig, poolconfig *PoolConfig) *Pool {
@@ -58,6 +53,7 @@ func New(config *ssh.ClientConfig, poolconfig *PoolConfig) *Pool {
 		poolconfig = &PoolConfig{}
 	}
 	return &Pool{
+		config:     config,
 		poolconfig: poolconfig,
 		clients:    make(map[string]*ssh.Client),
 		dialing:    make(map[string]chan struct{}),
@@ -66,7 +62,7 @@ func New(config *ssh.ClientConfig, poolconfig *PoolConfig) *Pool {
 }
 
 // Get() creates a session to a specific host. If successful, err will be nil
-// and you must call Close() on the returned *ssh.Session to ensure cleanup.
+// and you must call Put() on the returned *ssh.Session to ensure cleanup.
 func (p *Pool) Get(host string) (*Session, error) {
 
 	client, err := p.get_client(host)
