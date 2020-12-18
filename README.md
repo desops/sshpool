@@ -11,11 +11,12 @@ The pool itself has no configuration apart from a ClientConfig:
 package main
 
 import (
+	"fmt"
+	"io/ioutil"
 	"os"
-	"ioutil"
 
-	"golang.org/x/crypto/ssh"
 	"github.com/desops/sshpool"
+	"golang.org/x/crypto/ssh"
 )
 
 func main() {
@@ -26,15 +27,15 @@ func main() {
 }
 
 func run() error {
-   buf, err := ioutil.ReadFile("./keys/my_private_ssh_key")
-   if err != nil {
-   	return err
-   }
+	buf, err := ioutil.ReadFile("./keys/my_private_ssh_key")
+	if err != nil {
+		return err
+	}
 
-   key, err := ssh.ParsePrivateKey(buf)
-   if err != nil {
-   	return err
-   }
+	key, err := ssh.ParsePrivateKey(buf)
+	if err != nil {
+		return err
+	}
 
 	config := &ssh.ClientConfig{
 		User: "myuser",
