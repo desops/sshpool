@@ -149,7 +149,13 @@ retry:
 	if p.poolconfig.Debug {
 		fmt.Println("ssh open", host)
 	}
-	client, err = ssh.Dial("tcp", host+":22", p.config)
+
+	addr := host
+	if strings.IndexByte(addr, ':') == -1 {
+		addr += ":22"
+	}
+
+	client, err = ssh.Dial("tcp", addr, p.config)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %#v: %v", host, err)
 	}
