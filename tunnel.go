@@ -63,12 +63,22 @@ func (tunnel *Tunnel) accept() {
 func (tunnel *Tunnel) forward(local net.Conn) {
 	defer local.Close()
 
-	client, err := tunnel.pool.get_client(tunnel.host)
+	client, sessionid, err := tunnel.pool.get_client(tunnel.host)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
-	defer client.Close()
+
+	defer func() {
+		if tunnel.pool.poolconfig.Debug {
+			fmt.Printf("sshpool %s c%d s%d tunnel put\n", tunnel.host, client.clientid, sessionid)
+		}
+		_ = <-client.sessions
+	}()
+
+	if tunnel.pool.poolconfig.Debug {
+		fmt.Printf("sshpool %s c%d s%d tunnel dial\n", tunnel.host, client.clientid, sessionid)
+	}
 
 	remote, err := client.Dial("tcp", tunnel.remote)
 	if err != nil {

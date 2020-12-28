@@ -2,6 +2,7 @@ package sshpool
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -9,42 +10,87 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const (
+	// DefaultMaxSessions is set to the default /etc/ssh/sshd_config value.
+	// Most servers have not set MaxSessions, so they get the default limit of 10.
+	DefaultMaxSessions = 10
+
+	// DefaultMaxConnections is a bit arbitrary. It's a tradeoff between how long
+	// you wait for dials, and how long you wait for concurrent operations to finish.
+	DefaultMaxConnections = 10
+
+	// DefaultSessionCloseDelay was found by testing. 10ms was ALMOST enough. (3 / 1000 would fail)
+	DefaultSessionCloseDelay = time.Millisecond * 20
+)
+
 type Pool struct {
 	config     *ssh.ClientConfig
 	poolconfig *PoolConfig
 
-	clients_mu sync.Mutex
-	clients    map[string]*ssh.Client
+	clients_mu    sync.Mutex
+	clients       map[string][]*client
+	nextclientid  int
+	nextsessionid int
 
 	dialing_mu sync.Mutex
 	dialing    map[string]chan struct{}
+}
 
-	sessions_mu sync.Mutex
-	sessions    map[string][]Session
+type client struct {
+	*ssh.Client
+	sessions chan struct{} // this channel is used for MaxSessions limiting
+	clientid int
 }
 
 type PoolConfig struct {
 	Debug bool
+
+	// MaxSessions defines the maximum sessions per-connection. If left at 0,
+	// DefaultMaxSessions is used.
+	MaxSessions int
+
+	// MaxConnections limits the number of connections to the same host. If
+	// left at 0, DefaultMaxConnections is used. (Note each connection can have up to
+	// MaxSessions concurrent things happening on it.) Setting this to 1 is not
+	// a bad idea if you want to be gentle to your servers.
+	MaxConnections int
+
+	// SSH seems to take a moment to actually clean up a session after you close
+	// it. This delay seems to prevent "no more sessions" errors from happening
+	// by giving a very slight delay after closing but before allowing another
+	// connection. If 0, DefaultSessionCloseDelay is used.
+	SessionCloseDelay time.Duration
 }
 
 type Session struct {
 	*ssh.Session
-	pool *Pool
-	host string
+	pool      *Pool
+	client    *client
+	host      string
+	sessionid int
 }
 
 func (s *Session) Put() {
-	s.pool.sessions_mu.Lock()
-	ss := s.pool.sessions
-	for idx, s1 := range ss[s.host] {
-		if s1.Session == s.Session {
-			ss[s.host] = append(ss[s.host][:idx], ss[s.host][idx+1:]...)
-			//log.Printf("close %-20s %p %d", s.host, s.Session, len(ss[s.host]))
-			break
+	// This doesn't seem to actually do anything if your process finished.
+	// I think it would only matter if you put() a session that wasn't finished.
+	// Need to think about this more.
+	//	if err := s.Session.Close(); err != nil && err != io.EOF {
+	//		fmt.Printf("sshpool %s c%d s%d close error %v\n", s.host, s.client.clientid, s.sessionid, err)
+	//	}
+
+	//	if s.pool.poolconfig.Debug {
+	//		fmt.Printf("sshpool %s c%d s%d put\n", s.host, s.client.clientid, s.sessionid)
+	//	}
+
+	go func() {
+		if s.pool.poolconfig.SessionCloseDelay == 0 {
+			time.Sleep(DefaultSessionCloseDelay)
+		} else {
+			time.Sleep(s.pool.poolconfig.SessionCloseDelay)
 		}
-	}
-	s.pool.sessions = ss
-	s.pool.sessions_mu.Unlock()
+		_ = <-s.client.sessions
+	}()
+
 	return
 }
 
@@ -55,50 +101,54 @@ func New(config *ssh.ClientConfig, poolconfig *PoolConfig) *Pool {
 	return &Pool{
 		config:     config,
 		poolconfig: poolconfig,
-		clients:    make(map[string]*ssh.Client),
+		clients:    make(map[string][]*client),
 		dialing:    make(map[string]chan struct{}),
-		sessions:   make(map[string][]Session),
 	}
 }
 
 // Get() creates a session to a specific host. If successful, err will be nil
-// and you must call Put() on the returned *ssh.Session to ensure cleanup.
+// and you must call Put() on the returned *ssh.Session to ensure cleanup. If
+// the host connection already has MaxSessions sessions and MaxConnections is met,
+// Get() will block until another connection somewhere calls Put().
 func (p *Pool) Get(host string) (*Session, error) {
-
-	client, err := p.get_client(host)
+	// get_client will already have done a send on client.sessions for us.
+	client, sessionid, err := p.get_client(host)
 	if err != nil {
 		return nil, err
 	}
 
-	var s *ssh.Session
-	// 5 seconds
-	for tries := 0; tries < 500; tries++ {
-		s, err = client.NewSession()
-		if err == nil {
-			p.sessions_mu.Lock()
-			p.sessions[host] = append(p.sessions[host], Session{s, p, host})
-			//log.Printf("open %-20s %p %d", host, s, len(p.sessions[host]))
-			p.sessions_mu.Unlock()
-
-			return &Session{s, p, host}, nil
-		}
-
-		// some other error? return it
-		if !strings.Contains(err.Error(), "administratively prohibited (open failed)") {
-			return nil, err
-		}
-		// sleep for a bit and try again, we probably hit MaxSessions
-		time.Sleep(10 * time.Millisecond)
+	if p.poolconfig.Debug {
+		//fmt.Printf("sshpool %s c%d s%d new session\n", host, client.clientid, sessionid)
 	}
-	return nil, err
+
+	s, err := client.Client.NewSession()
+	if err != nil {
+		_ = <-client.sessions
+		return nil, err
+	}
+
+	session := &Session{
+		Session:   s,
+		sessionid: sessionid,
+		pool:      p,
+		host:      host,
+		client:    client,
+	}
+
+	return session, nil
 }
 
 // Take care here, there are tricky nested mutex locks.
-func (p *Pool) get_client(host string) (*ssh.Client, error) {
+func (p *Pool) get_client(host string) (*client, int, error) {
+
+	var maxc = p.poolconfig.MaxConnections
+	if maxc == 0 {
+		maxc = DefaultMaxConnections
+	}
 
 	var (
-		dialchan chan struct{}
-		client   *ssh.Client
+		dialchan  chan struct{}
+		sessionid int
 	)
 
 retry:
@@ -112,13 +162,55 @@ retry:
 		_, _ = <-dialchan
 	}
 
+	var (
+		noblock *client
+		block   []*client
+	)
+
+	// Choose a client that won't block if possible. If not possible, copy out a list of possible
+	// clients so we can block outside the lock.
 	p.clients_mu.Lock()
-	client = p.clients[host]
+	if sessionid == 0 {
+		p.nextsessionid++
+		sessionid = p.nextsessionid
+	}
+	for _, client := range p.clients[host] {
+		select {
+		case client.sessions <- struct{}{}:
+			noblock = client
+			break
+		default:
+		}
+	}
+	if noblock == nil && len(p.clients[host]) == maxc {
+		for _, c := range p.clients[host] {
+			block = append(block, c)
+		}
+	}
 	p.clients_mu.Unlock()
 
-	// best case
-	if client != nil {
-		return client, nil
+	if noblock != nil {
+		// best case: we found a client and it had a free spot and we have already reserved it.
+		return noblock, sessionid, nil
+	}
+
+	if block != nil {
+		// second best case: we found some full clients and it doesn't look like we should open
+		// any new ones. block here until one of the candidates has a free channel.
+
+		// fast case: we only have one candidate
+		if len(block) == 1 {
+			block[0].sessions <- struct{}{}
+			return block[0], sessionid, nil
+		}
+
+		// slow case: use the reflect package for a dynamic select
+		cases := make([]reflect.SelectCase, len(block))
+		for i, b := range block {
+			cases[i] = reflect.SelectCase{Dir: reflect.SelectSend, Chan: reflect.ValueOf(b.sessions), Send: reflect.ValueOf(struct{}{})}
+		}
+		chosen, _, _ := reflect.Select(cases)
+		return block[chosen], sessionid, nil
 	}
 
 	// now we dial, unless another call to Get() beat us in the race.
@@ -147,7 +239,7 @@ retry:
 	var err error
 
 	if p.poolconfig.Debug {
-		fmt.Println("ssh open", host)
+		fmt.Printf("sshpool %s dial\n", host)
 	}
 
 	addr := host
@@ -155,32 +247,45 @@ retry:
 		addr += ":22"
 	}
 
-	client, err = ssh.Dial("tcp", addr, p.config)
+	sshclient, err := ssh.Dial("tcp", addr, p.config)
 	if err != nil {
-		return nil, fmt.Errorf("ssh dial %#v: %v", host, err)
+		return nil, 0, fmt.Errorf("ssh dial %#v: %v", host, err)
 	}
 
+	max := p.poolconfig.MaxSessions
+
+	if max == 0 {
+		max = DefaultMaxSessions
+	}
+
+	c := &client{
+		Client:   sshclient,
+		sessions: make(chan struct{}, max),
+	}
+
+	// reserve first session
+	c.sessions <- struct{}{}
+
 	p.clients_mu.Lock()
-	p.clients[host] = client
+	p.nextclientid++
+	c.clientid = p.nextclientid
+	p.clients[host] = append(p.clients[host], c)
 	p.clients_mu.Unlock()
 
-	return client, nil
+	return c, sessionid, nil
 }
 
 func (p *Pool) Close() {
-	// take care here so we don't deadlock: copy clients so we can release the lock
-	clients := make(map[string]*ssh.Client)
 	p.clients_mu.Lock()
-	for host, client := range p.clients {
-		clients[host] = client
-		delete(p.clients, host)
-	}
-	p.clients_mu.Unlock()
+	defer p.clients_mu.Unlock()
 
-	for host, client := range clients {
-		if p.poolconfig.Debug {
-			fmt.Println("ssh quit", host)
+	for host, clients := range p.clients {
+		for _, client := range clients {
+			client.Client.Close()
 		}
-		client.Close()
+		delete(p.clients, host)
+		if p.poolconfig.Debug {
+			fmt.Printf("sshpool %s close (%d connections)\n", host, len(clients))
+		}
 	}
 }
