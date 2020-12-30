@@ -247,7 +247,20 @@ retry:
 		addr += ":22"
 	}
 
-	sshclient, err := ssh.Dial("tcp", addr, p.config)
+	config := p.config
+	at := strings.IndexByte(addr, '@')
+	if at > -1 {
+		user := addr[:at]
+		addr = addr[at+1:]
+
+		// don't modify the original config structure, just make a shallow copy
+		// so we can override the user.
+		newconfig := *config
+		newconfig.User = user
+		config = &newconfig
+	}
+
+	sshclient, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
 		return nil, 0, fmt.Errorf("ssh dial %#v: %v", host, err)
 	}
