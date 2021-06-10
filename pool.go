@@ -71,6 +71,8 @@ type Session struct {
 }
 
 func (s *Session) Put() {
+	// NOTE see also SFTPSession.Put()
+
 	// This doesn't seem to actually do anything if your process finished.
 	// I think it would only matter if you put() a session that wasn't finished.
 	// Need to think about this more.
@@ -111,6 +113,8 @@ func New(config *ssh.ClientConfig, poolconfig *PoolConfig) *Pool {
 // the host connection already has MaxSessions sessions and MaxConnections is met,
 // Get() will block until another connection somewhere calls Put().
 func (p *Pool) Get(host string) (*Session, error) {
+	// NOTE see also GetSFTP()
+
 	// get_client will already have done a send on client.sessions for us.
 	client, sessionid, err := p.get_client(host)
 	if err != nil {

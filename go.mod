@@ -2,4 +2,7 @@ module github.com/desops/sshpool
 
 go 1.15
 
-require golang.org/x/crypto v0.0.0-20201217014255-9d1352758620
+require (
+	github.com/pkg/sftp v1.13.0
+	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
+)
