@@ -1,6 +1,7 @@
 package sshpool
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -12,6 +13,10 @@ type SFTPSession struct {
 	client    *client
 	host      string
 	sessionid int
+}
+
+func (s *SFTPSession) String() string {
+	return fmt.Sprintf("sftp session %d host %s", s.sessionid, s.host)
 }
 
 func (p *Pool) GetSFTP(host string) (*SFTPSession, error) {

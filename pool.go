@@ -70,6 +70,10 @@ type Session struct {
 	sessionid int
 }
 
+func (s *Session) String() string {
+	return fmt.Sprintf("ssh session %d host %s", s.sessionid, s.host)
+}
+
 func (s *Session) Put() {
 	// NOTE see also SFTPSession.Put()
 
