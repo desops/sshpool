@@ -2,6 +2,7 @@ package sshpool
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -25,6 +26,10 @@ func (p *Pool) GetSFTP(host string) (*SFTPSession, error) {
 		return nil, err
 	}
 
+	if p.poolconfig.Debug {
+		log.Printf("sshpool %s c%d s%d new sftp session\n", host, client.clientid, sessionid)
+	}
+
 	s, err := sftp.NewClient(client.Client)
 	if err != nil {
 		_ = <-client.sessions
@@ -43,6 +48,9 @@ func (p *Pool) GetSFTP(host string) (*SFTPSession, error) {
 }
 
 func (s *SFTPSession) Put() {
+	if s.pool.poolconfig.Debug {
+		log.Printf("sshpool %s c%d s%d sftp put\n", s.host, s.client.clientid, s.sessionid)
+	}
 	go func() {
 		if s.pool.poolconfig.SessionCloseDelay == 0 {
 			time.Sleep(DefaultSessionCloseDelay)

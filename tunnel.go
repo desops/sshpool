@@ -1,7 +1,6 @@
 package sshpool
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -71,18 +70,18 @@ func (tunnel *Tunnel) forward(local net.Conn) {
 
 	defer func() {
 		if tunnel.pool.poolconfig.Debug {
-			fmt.Printf("sshpool %s c%d s%d tunnel put\n", tunnel.host, client.clientid, sessionid)
+			log.Printf("sshpool %s c%d s%d tunnel put\n", tunnel.host, client.clientid, sessionid)
 		}
 		_ = <-client.sessions
 	}()
 
 	if tunnel.pool.poolconfig.Debug {
-		fmt.Printf("sshpool %s c%d s%d tunnel dial\n", tunnel.host, client.clientid, sessionid)
+		log.Printf("sshpool %s c%d s%d tunnel dial\n", tunnel.host, client.clientid, sessionid)
 	}
 
 	remote, err := client.Dial("tcp", tunnel.remote)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 	defer remote.Close()

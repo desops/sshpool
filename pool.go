@@ -2,6 +2,7 @@ package sshpool
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -81,12 +82,12 @@ func (s *Session) Put() {
 	// I think it would only matter if you put() a session that wasn't finished.
 	// Need to think about this more.
 	//	if err := s.Session.Close(); err != nil && err != io.EOF {
-	//		fmt.Printf("sshpool %s c%d s%d close error %v\n", s.host, s.client.clientid, s.sessionid, err)
+	//		log.Printf("sshpool %s c%d s%d close error %v\n", s.host, s.client.clientid, s.sessionid, err)
 	//	}
 
-	//	if s.pool.poolconfig.Debug {
-	//		fmt.Printf("sshpool %s c%d s%d put\n", s.host, s.client.clientid, s.sessionid)
-	//	}
+	if s.pool.poolconfig.Debug {
+		log.Printf("sshpool %s c%d s%d put\n", s.host, s.client.clientid, s.sessionid)
+	}
 
 	go func() {
 		if s.pool.poolconfig.SessionCloseDelay == 0 {
@@ -126,7 +127,7 @@ func (p *Pool) Get(host string) (*Session, error) {
 	}
 
 	if p.poolconfig.Debug {
-		//fmt.Printf("sshpool %s c%d s%d new session\n", host, client.clientid, sessionid)
+		log.Printf("sshpool %s c%d s%d new session\n", host, client.clientid, sessionid)
 	}
 
 	s, err := client.Client.NewSession()
@@ -247,7 +248,7 @@ retry:
 	var err error
 
 	if p.poolconfig.Debug {
-		fmt.Printf("sshpool %s dial\n", host)
+		log.Printf("sshpool %s dial\n", host)
 	}
 
 	addr := host
@@ -306,7 +307,7 @@ func (p *Pool) Close() {
 		}
 		delete(p.clients, host)
 		if p.poolconfig.Debug {
-			fmt.Printf("sshpool %s close (%d connections)\n", host, len(clients))
+			log.Printf("sshpool %s close (%d connections)\n", host, len(clients))
 		}
 	}
 }
